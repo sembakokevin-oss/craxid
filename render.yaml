@@ -6,7 +6,6 @@ services:
     repo: https://github.com/sembakokevin-oss/craxid
     region: singapore # Render region
     plan: free
-    healthCheckPath: / # -> Dihapus karena port 22 (SSH) tidak bisa merespons HTTP GET dari Render.
     envVars:
       - key: PORT
         value: 22
