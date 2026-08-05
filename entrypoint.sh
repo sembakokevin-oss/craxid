@@ -18,9 +18,12 @@ class HealthHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Content-type", "text/html")
         self.end_headers()
         try:
-            req = urllib.request.urlopen("http://localhost:4040/api/tunnels", timeout=2)
+            req = urllib.request.urlopen("http://localhost:4040/api/tunnels", timeout=3)
             data = json.loads(req.read().decode())
-            pub_url = data["tunnels"][0]["public_url"]
+            tunnels = data.get("tunnels", [])
+            if not tunnels:
+                raise Exception("Ngrok is connecting to server...")
+            pub_url = tunnels[0]["public_url"]
             ssh_cmd = "ssh root@" + pub_url[6:].replace(":", " -p ")
             r_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "ngrok-production-ff12.up.railway.app")
             html = f"""<html>
@@ -35,12 +38,24 @@ class HealthHandler(http.server.SimpleHTTPRequestHandler):
   <pre style="background: #161b22; padding: 12px; border-radius: 6px; border: 1px solid #30363d; color: #79c0ff; font-size: 14px; overflow-x: auto;">{ssh_cmd}</pre>
   <p><b>ROOT Password:</b> <code style="background: #21262d; padding: 4px 8px; border-radius: 4px; color: #ffa657;">sembakokevin-oss</code></p>
   <hr style="border: 0; border-top: 1px solid #30363d; margin-top: 20px;">
-  <p style="font-size: 12px; color: #8b949e;">Status: Healthy | Service: {os.environ.get("RAILWAY_SERVICE_NAME", "Ngrok")} | Env: {os.environ.get("RAILWAY_ENVIRONMENT_NAME", "production")}</p>
+  <p style="font-size: 12px; color: #8b949e;">Status: Healthy | Service: {os.environ.get("RAILWAY_SERVICE_NAME", "Ngrok")}</p>
 </body>
 </html>"""
             self.wfile.write(html.encode())
-        except Exception:
-            self.wfile.write(b"<html><body style=\"background:#0d1117;color:#fff;padding:40px;\"><h2>SSH Container Active</h2><p>Healthcheck OK - Ngrok starting...</p></body></html>")
+        except Exception as err:
+            err_msg = str(err)
+            html = f"""<html>
+<head>
+  <title>SSH Container Status - Railway</title>
+  <meta http-equiv="refresh" content="4">
+</head>
+<body style="font-family: sans-serif; background:#0d1117; color:#fff; padding:40px; max-width:650px; margin:auto;">
+  <h2 style="color:#e3b341;">⏳ Ngrok Tunnel Starting...</h2>
+  <p>Status: {err_msg}</p>
+  <p>Halaman ini akan otomatis mereset (auto-refresh) dalam 4 detik...</p>
+</body>
+</html>"""
+            self.wfile.write(html.encode())
 
     def log_message(self, format, *args):
         return
