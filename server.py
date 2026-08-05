@@ -11,10 +11,10 @@ class HealthHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
 
         r_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "craxid-production.up.railway.app")
-        tcp_domain = os.environ.get("RAILWAY_TCP_PROXY_DOMAIN", "sakura.proxy.rlwy.net")
-        tcp_port = os.environ.get("RAILWAY_TCP_PROXY_PORT", "44418")
+        tcp_domain = os.environ.get("RAILWAY_TCP_PROXY_DOMAIN", "zephyr.proxy.rlwy.net")
+        tcp_port = os.environ.get("RAILWAY_TCP_PROXY_PORT", "41183")
         
-        railway_ssh_cmd = f"ssh root@{tcp_domain} -p {tcp_port}"
+        railway_ssh_cmd = f"ssh root@{tcp_domain} -p {tcp_port}" if (tcp_domain and tcp_port) else ""
 
         # Fetch Ngrok tunnel info safely
         ngrok_ssh_cmd = ""
@@ -35,6 +35,16 @@ class HealthHandler(http.server.SimpleHTTPRequestHandler):
     <div class="cmd-box">
       <span class="cmd-text" id="ngrokCmd">{ngrok_ssh_cmd}</span>
       <button class="btn-copy" onclick="copyText('ngrokCmd', this)">Copy Ngrok SSH</button>
+    </div>
+"""
+
+        railway_block = ""
+        if railway_ssh_cmd:
+            railway_block = f"""
+    <div class="section-title">Railway Direct SSH Command</div>
+    <div class="cmd-box">
+      <span class="cmd-text" id="railwayCmd">{railway_ssh_cmd}</span>
+      <button class="btn-copy" onclick="copyText('railwayCmd', this)">Copy Direct SSH</button>
     </div>
 """
 
@@ -181,12 +191,7 @@ class HealthHandler(http.server.SimpleHTTPRequestHandler):
       <div class="badge"><div class="pulse"></div>ONLINE</div>
     </div>
 
-    <div class="section-title">Railway Direct SSH Command</div>
-    <div class="cmd-box">
-      <span class="cmd-text" id="railwayCmd">{railway_ssh_cmd}</span>
-      <button class="btn-copy" onclick="copyText('railwayCmd', this)">Copy Direct SSH</button>
-    </div>
-
+    {railway_block}
     {ngrok_block}
 
     <div class="grid">
@@ -200,11 +205,11 @@ class HealthHandler(http.server.SimpleHTTPRequestHandler):
       </div>
       <div class="grid-item">
         <div class="section-title">Railway TCP Host</div>
-        <div class="val">{tcp_domain}</div>
+        <div class="val">{tcp_domain if tcp_domain else "zephyr.proxy.rlwy.net"}</div>
       </div>
       <div class="grid-item">
         <div class="section-title">Railway TCP Port</div>
-        <div class="val" style="color: #79c0ff;">{tcp_port}</div>
+        <div class="val" style="color: #79c0ff;">{tcp_port if tcp_port else "41183"}</div>
       </div>
     </div>
 
@@ -234,6 +239,9 @@ class HealthHandler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, format, *args):
         return
 
+class ReusableTCPServer(socketserver.TCPServer):
+    allow_reuse_address = True
+
 if __name__ == "__main__":
     port_str = os.environ.get("PORT", "8080")
     try:
@@ -241,6 +249,13 @@ if __name__ == "__main__":
     except ValueError:
         port = 8080
 
-    socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer(("0.0.0.0", port), HealthHandler) as httpd:
-        httpd.serve_forever()
+    try:
+        with ReusableTCPServer(("0.0.0.0", port), HealthHandler) as httpd:
+            httpd.serve_forever()
+    except OSError as e:
+        print(f"Port {port} busy, attempting fallback...")
+        try:
+            with ReusableTCPServer(("0.0.0.0", 8080), HealthHandler) as httpd:
+                httpd.serve_forever()
+        except OSError:
+            pass
