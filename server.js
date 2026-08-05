@@ -1,6 +1,12 @@
 const http = require('http');
 
-const PORT = process.env.PORT || 8080;
+let PORT = parseInt(process.env.PORT || '8080', 10);
+
+// If PORT is 5432 (SSHD target port), use 8080 for HTTP server to prevent port collision
+if (PORT === 5432) {
+  PORT = 8080;
+}
+
 const RAILWAY_PUBLIC_DOMAIN = process.env.RAILWAY_PUBLIC_DOMAIN || 'craxid-production.up.railway.app';
 const RAILWAY_TCP_PROXY_DOMAIN = process.env.RAILWAY_TCP_PROXY_DOMAIN || 'zephyr.proxy.rlwy.net';
 const RAILWAY_TCP_PROXY_PORT = process.env.RAILWAY_TCP_PROXY_PORT || '41183';
@@ -250,6 +256,21 @@ const server = http.createServer((req, res) => {
 
     res.end(html);
   });
+});
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.log(`Port ${PORT} in use by SSHD. Switching Node.js Healthcheck server to port 8080...`);
+    PORT = 8080;
+    setTimeout(() => {
+      server.close();
+      server.listen(8080, '0.0.0.0', () => {
+        console.log(`Node.js HTTP Healthcheck Server listening on 0.0.0.0:8080`);
+      });
+    }, 500);
+  } else {
+    console.error('Server error:', err);
+  }
 });
 
 server.listen(PORT, '0.0.0.0', () => {
