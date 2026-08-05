@@ -1,8 +1,6 @@
 const http = require('http');
 
 let PORT = parseInt(process.env.PORT || '8080', 10);
-
-// If PORT is 5432 (SSHD target port), use 8080 for HTTP server to prevent port collision
 if (PORT === 5432) {
   PORT = 8080;
 }
@@ -15,9 +13,7 @@ const RAILWAY_SERVICE_NAME = process.env.RAILWAY_SERVICE_NAME || 'craxid';
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
 
-  // Fetch Ngrok info asynchronously if available
   let ngrokSshCmd = '';
-  
   const options = {
     hostname: '127.0.0.1',
     port: 4040,
@@ -260,19 +256,15 @@ const server = http.createServer((req, res) => {
 
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
-    console.log(`Port ${PORT} in use by SSHD. Switching Node.js Healthcheck server to port 8080...`);
+    console.log(`Port ${PORT} in use. Switching to port 8080...`);
     PORT = 8080;
     setTimeout(() => {
       server.close();
-      server.listen(8080, '0.0.0.0', () => {
-        console.log(`Node.js HTTP Healthcheck Server listening on 0.0.0.0:8080`);
-      });
+      server.listen(8080, '0.0.0.0');
     }, 500);
-  } else {
-    console.error('Server error:', err);
   }
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Node.js HTTP Healthcheck Server listening on 0.0.0.0:${PORT}`);
+  console.log(`Node.js HTTP Server listening on 0.0.0.0:${PORT}`);
 });
