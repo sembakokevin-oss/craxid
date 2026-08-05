@@ -1,0 +1,16 @@
+{
+  "name": "rairu-kun-ssh",
+  "version": "1.0.0",
+  "description": "SSH Container Control Center Dashboard for Railway",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [
+    "ssh",
+    "ngrok",
+    "railway"
+  ],
+  "author": "sembakokevin-oss",
+  "license": "MIT"
+}
