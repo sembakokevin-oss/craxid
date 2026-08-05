@@ -18,10 +18,11 @@ RUN wget -q https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.zip
     && chmod +x ngrok \
     && rm /ngrok-stable-linux-amd64.zip
 
-# Copy server.py dan entrypoint.sh
+# Copy server.py, entrypoint.sh, dan start.sh
 COPY server.py /server.py
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY start.sh /start.sh
+RUN chmod +x /entrypoint.sh /start.sh
 
 # Expose ports yang diperlukan
 EXPOSE 22 80 443 3306 4040 5432 5700 5701 5010 6800 6900 8080 8888 9000
