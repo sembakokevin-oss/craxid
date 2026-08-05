@@ -2,7 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { exec } = require('child_process');
+const { spawn, exec } = require('child_process');
 
 let PORT = parseInt(process.env.PORT || '8080', 10);
 if (PORT === 5432) {
@@ -18,44 +18,38 @@ const server = http.createServer((req, res) => {
   const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const pathname = urlObj.pathname;
 
-  // --- API: EXECUTE SHELL COMMAND ---
-  if (req.method === 'POST' && pathname === '/api/exec') {
+  // --- API: REAL-TIME STREAMING SHELL COMMAND (LIVE STDOUT / STDERR) ---
+  if (req.method === 'POST' && pathname === '/api/exec-stream') {
     let body = '';
     req.on('data', chunk => body += chunk);
     req.on('end', () => {
       try {
         const data = JSON.parse(body || '{}');
         let rawCmd = (data.command || 'pwd').trim();
-        let cwd = data.cwd && fs.existsSync(data.cwd) ? data.cwd : '/';
-        
+        let cwd = data.cwd && fs.existsSync(data.cwd) ? data.cwd : '/root';
+
         if (rawCmd.startsWith('cd ')) {
           const targetDir = rawCmd.substring(3).trim();
           const resolvedPath = path.resolve(cwd, targetDir);
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
           if (fs.existsSync(resolvedPath) && fs.statSync(resolvedPath).isDirectory()) {
-            cwd = resolvedPath;
-            res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
             return res.end(JSON.stringify({
-              stdout: `Changed directory to: ${cwd}\n`,
-              stderr: '',
-              code: 0,
-              cwd: cwd
+              type: 'cd',
+              stdout: `Changed directory to: ${resolvedPath}\n`,
+              cwd: resolvedPath
             }));
           } else {
-            res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
             return res.end(JSON.stringify({
-              stdout: '',
+              type: 'cd',
               stderr: `bash: cd: ${targetDir}: No such file or directory\n`,
-              code: 1,
               cwd: cwd
             }));
           }
         } else if (rawCmd === 'cd') {
-          cwd = '/root';
           res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
           return res.end(JSON.stringify({
+            type: 'cd',
             stdout: `Changed directory to: /root\n`,
-            stderr: '',
-            code: 0,
             cwd: '/root'
           }));
         }
@@ -69,18 +63,37 @@ const server = http.createServer((req, res) => {
         const customEnv = Object.assign({}, process.env, {
           COLUMNS: '100',
           LINES: '40',
-          TERM: 'xterm-256color'
+          TERM: 'xterm-256color',
+          FORCE_COLOR: '1'
         });
 
-        exec(rawCmd, { cwd, env: customEnv, maxBuffer: 10 * 1024 * 1024, timeout: 120000 }, (error, stdout, stderr) => {
-          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-          res.end(JSON.stringify({
-            stdout: stdout || '',
-            stderr: stderr || (error ? error.message : ''),
-            code: error ? (error.code || 1) : 0,
-            cwd: cwd
-          }));
+        res.writeHead(200, {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Transfer-Encoding': 'chunked',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive'
         });
+
+        const child = spawn('sh', ['-c', rawCmd], { cwd, env: customEnv });
+
+        child.stdout.on('data', (chunk) => {
+          res.write(chunk);
+        });
+
+        child.stderr.on('data', (chunk) => {
+          res.write(chunk);
+        });
+
+        child.on('close', (code) => {
+          res.write(`\n[Process completed with code ${code}]\n`);
+          res.end();
+        });
+
+        child.on('error', (err) => {
+          res.write(`\n[Process error: ${err.message}]\n`);
+          res.end();
+        });
+
       } catch (e) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: e.message }));
@@ -544,6 +557,30 @@ const server = http.createServer((req, res) => {
     }
     .btn-copy-sm:hover { background: #1f6feb; color: #fff; }
 
+    /* High Specs Badge Card */
+    .specs-card {
+      background: linear-gradient(135deg, rgba(88, 166, 255, 0.08) 0%, rgba(188, 140, 255, 0.08) 100%);
+      border: 1px solid rgba(88, 166, 255, 0.3);
+      border-radius: 12px;
+      padding: 18px;
+      margin-bottom: 24px;
+    }
+    .specs-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-top: 10px;
+    }
+    .spec-box {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 12px;
+      text-align: center;
+    }
+    .spec-label { font-size: 11px; color: #8b949e; text-transform: uppercase; margin-bottom: 4px; font-weight: 600; }
+    .spec-val { font-size: 15px; font-weight: 700; color: #3fb950; font-family: monospace; }
+
     /* Page Navigation Buttons */
     .btn-nav-page2 {
       background: linear-gradient(135deg, #1f6feb 0%, #8957e5 100%);
@@ -882,6 +919,29 @@ const server = http.createServer((req, res) => {
         </button>
       </div>
 
+      <!-- VPS Hardware Specifications Card -->
+      <div class="specs-card">
+        <div class="section-title" style="color: #79c0ff; font-size: 12px;">🖥️ VPS High Performance Specifications</div>
+        <div class="specs-grid">
+          <div class="spec-box">
+            <div class="spec-label">vCPU Cores</div>
+            <div class="spec-val">4 Cores</div>
+          </div>
+          <div class="spec-box">
+            <div class="spec-label">RAM Memory</div>
+            <div class="spec-val">16 GB</div>
+          </div>
+          <div class="spec-box">
+            <div class="spec-label">NVMe Storage</div>
+            <div class="spec-val">200 GB</div>
+          </div>
+          <div class="spec-box">
+            <div class="spec-label">Bandwidth</div>
+            <div class="spec-val">16 TB</div>
+          </div>
+        </div>
+      </div>
+
       <!-- SSH Commands Section -->
       <div class="cmd-section">
         <div class="section-title">Railway Direct SSH Command</div>
@@ -957,17 +1017,18 @@ const server = http.createServer((req, res) => {
       <div id="tab-terminal" class="tab-content active">
         <div class="terminal-window">
           <div class="terminal-header">
-            <span>root@${hostname}:/# (Linux Full VPS Console)</span>
-            <span style="color:#3fb950;">Active Connection</span>
+            <span>root@${hostname}:/# (Linux Live Streaming Terminal)</span>
+            <span id="termStatusBadge" style="color:#3fb950; font-weight:600;">🟢 Connected</span>
           </div>
           <div class="terminal-output" id="termOutput">Linux VPS Shell Connected. You have full root privileges across all directories (/root, /etc, /var, /tmp, /usr, etc.)...\n</div>
           <div class="terminal-input-bar">
             <span class="prompt-label" id="termPrompt">root@${hostname}:/#</span>
             <input type="text" class="term-input" id="termInput" placeholder="Ketik perintah (contoh: npm install, ls, cd /root, apt update)..." onkeydown="if(event.key==='Enter') runCmd()">
-            <button class="btn-exec" onclick="runCmd()">Eksekusi</button>
+            <button class="btn-exec" id="btnExecCmd" onclick="runCmd()">Eksekusi</button>
           </div>
         </div>
         <div class="quick-cmds">
+          <button class="btn-chip" onclick="quickCmd('npm install')">npm install ⚙️</button>
           <button class="btn-chip" onclick="quickCmd('ls')">ls (Grid)</button>
           <button class="btn-chip" onclick="quickCmd('ls -la')">ls -la (List)</button>
           <button class="btn-chip" onclick="quickCmd('cd /root && ls')">cd /root</button>
@@ -1112,8 +1173,8 @@ const server = http.createServer((req, res) => {
       document.getElementById('fmFileSelector').click();
     }
 
-    // --- TERMINAL CONSOLE LOGIC ---
-    function runCmd() {
+    // --- REAL-TIME LIVE STREAMING TERMINAL CONSOLE LOGIC ---
+    async function runCmd() {
       const input = document.getElementById('termInput');
       const cmd = input.value.trim();
       if (!cmd) return;
@@ -1121,23 +1182,59 @@ const server = http.createServer((req, res) => {
       appendTerm(\`root@\${vpsHostname}:\${currentDir}# \${cmd}\n\`);
       input.value = '';
 
-      fetch('/api/exec', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: cmd, cwd: currentDir })
-      })
-      .then(res => res.json())
-      .then(data => {
-        if (data.stdout) appendTerm(data.stdout);
-        if (data.stderr) appendTerm(data.stderr);
-        if (data.cwd) {
-          currentDir = data.cwd;
-          document.getElementById('termPrompt').innerText = \`root@\${vpsHostname}:\${currentDir}#\`;
-          document.getElementById('currentPath').innerText = currentDir;
-          updateUploadTargetDisplay();
+      const badge = document.getElementById('termStatusBadge');
+      const btn = document.getElementById('btnExecCmd');
+      badge.innerHTML = '⚙️ Executing...';
+      badge.style.color = '#58a6ff';
+      btn.innerText = 'Running...';
+      btn.disabled = true;
+
+      try {
+        const response = await fetch('/api/exec-stream', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ command: cmd, cwd: currentDir })
+        });
+
+        if (!response.ok) {
+          appendTerm(\`[HTTP ERROR \${response.status}]\n\`);
+          return;
         }
-      })
-      .catch(err => appendTerm(\`[EXEC ERROR] \${err.message}\n\`));
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunkText = decoder.decode(value, { stream: true });
+
+          if (chunkText.trim().startsWith('{') && chunkText.includes('"type":"cd"')) {
+            try {
+              const cdData = JSON.parse(chunkText.trim());
+              if (cdData.stdout) appendTerm(cdData.stdout);
+              if (cdData.stderr) appendTerm(cdData.stderr);
+              if (cdData.cwd) {
+                currentDir = cdData.cwd;
+                document.getElementById('termPrompt').innerText = \`root@\${vpsHostname}:\${currentDir}#\`;
+                document.getElementById('currentPath').innerText = currentDir;
+                updateUploadTargetDisplay();
+              }
+              break;
+            } catch(e) {}
+          }
+
+          appendTerm(chunkText);
+        }
+
+      } catch (err) {
+        appendTerm(\`[STREAM ERROR] \${err.message}\n\`);
+      } finally {
+        badge.innerHTML = '🟢 Connected';
+        badge.style.color = '#3fb950';
+        btn.innerText = 'Eksekusi';
+        btn.disabled = false;
+      }
     }
 
     function quickCmd(cmd) {
