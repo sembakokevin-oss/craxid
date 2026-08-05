@@ -3,14 +3,14 @@ services:
   - type: web
     name: Ngrok
     env: docker
-    repo: https://github.com/craxid/rairu-kun # optional
-    region: Singapore # optional (defaults to Singapore)
-    plan: free # optional (defaults to starter)
-    healthCheckPath: /
+    repo: https://github.com/sembakokevin-oss/craxid
+    region: singapore # Render region
+    plan: free
+    # healthCheckPath: / -> Dihapus karena port 22 (SSH) tidak bisa merespons HTTP GET dari Render.
     envVars:
-      - key: PORT # ngrok port
+      - key: PORT
         value: 22
-      - key: NGROK_TOKEN # ngrok token
-        sync: false
-      - key: REGION # ngrok region
-        sync: false
+      - key: NGROK_TOKEN
+        value: 3HTO4awV1SUNUc7ItK0EefZOR0i_5p25sycyjdeDMxJ1EVP5J
+      - key: REGION
+        value: ap # Region Ngrok untuk Asia/Singapura
