@@ -89,6 +89,37 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // --- API: UNZIP FILE DIRECTLY ---
+  if (req.method === 'POST' && pathname === '/api/unzip') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try {
+        const data = JSON.parse(body || '{}');
+        const zipPath = data.path;
+        const targetDir = data.dest || (zipPath ? path.dirname(zipPath) : '/root');
+
+        if (!zipPath || !fs.existsSync(zipPath)) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'ZIP file not found' }));
+        }
+
+        exec(`unzip -o "${zipPath}" -d "${targetDir}"`, (err, stdout, stderr) => {
+          if (err) {
+            res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+            return res.end(JSON.stringify({ success: false, error: stderr || err.message }));
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ success: true, dir: targetDir, stdout: stdout }));
+        });
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
   // --- API: READ FILE CONTENT ---
   if (req.method === 'GET' && pathname === '/api/readfile') {
     const filePath = urlObj.searchParams.get('path');
@@ -189,18 +220,33 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // --- API: UPLOAD FILE ---
+  // --- API: UPLOAD FILE WITH AUTO-UNZIP OPTION ---
   if (req.method === 'POST' && pathname === '/api/upload') {
     const targetDir = urlObj.searchParams.get('dir') || '/root';
     const filename = urlObj.searchParams.get('filename') || `file_${Date.now()}`;
+    const autoUnzip = urlObj.searchParams.get('autounzip') === 'true';
     const destFolder = fs.existsSync(targetDir) ? targetDir : '/root';
     const targetPath = path.join(destFolder, path.basename(filename));
 
     const writeStream = fs.createWriteStream(targetPath);
     req.pipe(writeStream);
     req.on('end', () => {
-      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ success: true, path: targetPath, filename, dir: destFolder }));
+      if (autoUnzip && targetPath.toLowerCase().endsWith('.zip')) {
+        exec(`unzip -o "${targetPath}" -d "${destFolder}"`, (unzipErr) => {
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({
+            success: true,
+            path: targetPath,
+            filename,
+            dir: destFolder,
+            unzipped: !unzipErr,
+            unzipError: unzipErr ? unzipErr.message : null
+          }));
+        });
+      } else {
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ success: true, path: targetPath, filename, dir: destFolder, unzipped: false }));
+      }
     });
     req.on('error', (err) => {
       res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -686,6 +732,8 @@ const server = http.createServer((req, res) => {
     }
     .btn-edit { background: rgba(88, 166, 255, 0.15); color: #58a6ff; border-color: rgba(88, 166, 255, 0.4); }
     .btn-edit:hover { background: #1f6feb; color: #fff; }
+    .btn-unzip { background: rgba(188, 140, 255, 0.15); color: #bc8cff; border-color: rgba(188, 140, 255, 0.4); }
+    .btn-unzip:hover { background: #8957e5; color: #fff; }
     .btn-del { background: rgba(248, 81, 73, 0.15); color: #f85149; border-color: rgba(248, 81, 73, 0.4); }
     .btn-del:hover { background: #f85149; color: #fff; }
 
@@ -797,6 +845,16 @@ const server = http.createServer((req, res) => {
     .file-input { display: none; }
     .upload-progress { margin-top: 14px; font-size: 13px; color: #3fb950; display: none; padding: 12px; background: rgba(46, 160, 67, 0.1); border-radius: 8px; border: 1px solid rgba(46, 160, 67, 0.3); }
 
+    .checkbox-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: #c9d1d9;
+      margin-top: 14px;
+      justify-content: center;
+    }
+
     /* Footer */
     .footer {
       text-align: center;
@@ -892,7 +950,7 @@ const server = http.createServer((req, res) => {
       <div class="tabs">
         <button class="tab-btn active" onclick="switchTab('terminal', this)">💻 VPS Linux Console</button>
         <button class="tab-btn" onclick="switchTab('files', this)">📁 System File Manager (/)</button>
-        <button class="tab-btn" onclick="switchTab('upload', this)">📤 Upload File</button>
+        <button class="tab-btn" onclick="switchTab('upload', this)">📤 Upload File / ZIP</button>
       </div>
 
       <!-- Tab 1: Terminal Console -->
@@ -959,11 +1017,17 @@ const server = http.createServer((req, res) => {
           <span style="font-family:monospace; font-size:14px; color:#58a6ff; font-weight:700;" id="uploadTargetDirDisplay">/</span>
         </div>
         <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileSelector').click()">
-          <span class="drop-icon">☁️</span>
-          <p style="font-weight:600;font-size:15px;margin-bottom:6px;">Tarik & Lepas File Di Sini (Semua Jenis File)</p>
-          <p style="font-size:13px;color:#8b949e;">File akan diunggah langsung ke folder aktif di atas</p>
+          <span class="drop-icon">📦</span>
+          <p style="font-weight:600;font-size:15px;margin-bottom:6px;">Tarik & Lepas File ATAU File .ZIP Di Sini</p>
+          <p style="font-size:13px;color:#8b949e;">File akan diunggah & diekstrak otomatis langsung ke folder aktif di atas</p>
           <input type="file" id="fileSelector" class="file-input" multiple onchange="handleFileSelect(this.files)">
         </div>
+
+        <div class="checkbox-group">
+          <input type="checkbox" id="chkAutoUnzip" checked>
+          <label for="chkAutoUnzip"><b>Otomatis Ekstrak File .ZIP</b> setelah berhasil diunggah ke folder aktif</label>
+        </div>
+
         <div class="upload-progress" id="uploadProgress">Uploading...</div>
       </div>
 
@@ -1124,8 +1188,9 @@ const server = http.createServer((req, res) => {
           data.items.forEach(item => {
             const sizeStr = item.isDir ? '-' : formatBytes(item.size);
             const dateStr = new Date(item.mtime).toLocaleString('id-ID');
-            const icon = item.isDir ? '📁' : '📄';
+            const icon = item.isDir ? '📁' : (item.name.toLowerCase().endsWith('.zip') ? '📦' : '📄');
             const actionClick = item.isDir ? \`loadFiles('\${escapeJs(item.path)}')\` : \`openEditorModal('\${escapeJs(item.path)}')\`;
+            const isZip = !item.isDir && item.name.toLowerCase().endsWith('.zip');
             
             html += \`<tr>
               <td>
@@ -1137,7 +1202,7 @@ const server = http.createServer((req, res) => {
               <td>\${sizeStr}</td>
               <td style="color:#8b949e;">\${dateStr}</td>
               <td>
-                \${!item.isDir ? \`<button class="btn-action-sm btn-edit" onclick="openEditorModal('\${escapeJs(item.path)}')">Edit ✏️</button>\` : ''}
+                \${isZip ? \`<button class="btn-action-sm btn-unzip" onclick="unzipFile('\${escapeJs(item.path)}')">Ekstrak 📦</button>\` : (!item.isDir ? \`<button class="btn-action-sm btn-edit" onclick="openEditorModal('\${escapeJs(item.path)}')">Edit ✏️</button>\` : '')}
                 <button class="btn-action-sm btn-del" onclick="deleteItem('\${escapeJs(item.path)}')">Hapus</button>
               </td>
             </tr>\`;
@@ -1210,6 +1275,26 @@ const server = http.createServer((req, res) => {
       currentlyEditingPath = '';
     }
 
+    // --- UNZIP FILE DIRECTLY LOGIC ---
+    function unzipFile(filePath) {
+      if (!confirm('Ekstrak file ZIP ini ke folder saat ini (' + currentDir + ') ?')) return;
+      fetch('/api/unzip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: filePath, dest: currentDir })
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          alert('✅ File ZIP berhasil diekstrak ke folder ' + currentDir);
+          loadFiles(currentDir);
+        } else {
+          alert('❌ Gagal mengekstrak ZIP: ' + data.error);
+        }
+      })
+      .catch(err => alert('❌ Error: ' + err.message));
+    }
+
     function deleteItem(itemPath) {
       if (!confirm('Apakah Anda yakin ingin menghapus: ' + itemPath + ' ?')) return;
       fetch('/api/delete', {
@@ -1242,17 +1327,18 @@ const server = http.createServer((req, res) => {
       });
     }
 
-    // --- FILE UPLOAD LOGIC ---
+    // --- FILE UPLOAD LOGIC WITH AUTO UNZIP SUPPORT ---
     function handleFileSelect(files) {
       if (!files || files.length === 0) return;
       const targetDir = currentDir || '/root';
+      const autoUnzip = document.getElementById('chkAutoUnzip') ? document.getElementById('chkAutoUnzip').checked : true;
       const prog = document.getElementById('uploadProgress');
       prog.style.display = 'block';
       
       let uploaded = 0;
       Array.from(files).forEach(file => {
         prog.innerHTML = \`Mengunggah <b>\${file.name}</b> ke <code>\${targetDir}</code>...\`;
-        fetch(\`/api/upload?dir=\${encodeURIComponent(targetDir)}&filename=\${encodeURIComponent(file.name)}\`, {
+        fetch(\`/api/upload?dir=\${encodeURIComponent(targetDir)}&filename=\${encodeURIComponent(file.name)}&autounzip=\${autoUnzip}\`, {
           method: 'POST',
           body: file
         })
@@ -1260,8 +1346,9 @@ const server = http.createServer((req, res) => {
         .then(data => {
           uploaded++;
           if (uploaded === files.length) {
-            prog.innerHTML = \`✅ Sukses mengunggah <b>\${files.length} file</b> ke <code>\${targetDir}</code>!\`;
-            setTimeout(() => prog.style.display = 'none', 4000);
+            const extraMsg = data.unzipped ? ' (File ZIP otomatis diekstrak! 📦)' : '';
+            prog.innerHTML = \`✅ Sukses mengunggah <b>\${files.length} file</b> ke <code>\${targetDir}</code>\${extraMsg}!\`;
+            setTimeout(() => prog.style.display = 'none', 4500);
             loadFiles(targetDir);
           }
         })
