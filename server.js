@@ -28,7 +28,6 @@ const server = http.createServer((req, res) => {
         const rawCmd = (data.command || 'pwd').trim();
         let cwd = data.cwd && fs.existsSync(data.cwd) ? data.cwd : '/';
         
-        // Handle "cd <path>" command directly to update working directory
         if (rawCmd.startsWith('cd ')) {
           const targetDir = rawCmd.substring(3).trim();
           const resolvedPath = path.resolve(cwd, targetDir);
@@ -78,7 +77,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // --- API: LIST FILES IN ANY VPS DIRECTORY (SYSTEM ROOT AND SUBDIRECTORIES) ---
+  // --- API: LIST FILES IN ANY VPS DIRECTORY ---
   if (req.method === 'GET' && pathname === '/api/files') {
     let targetPath = urlObj.searchParams.get('path') || '/';
     if (!fs.existsSync(targetPath)) targetPath = '/';
@@ -117,7 +116,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // --- API: UPLOAD FILE (ANY TYPE TO ANY VPS FOLDER) ---
+  // --- API: UPLOAD FILE TO SPECIFIED VPS FOLDER ---
   if (req.method === 'POST' && pathname === '/api/upload') {
     const targetDir = urlObj.searchParams.get('dir') || '/root';
     const filename = urlObj.searchParams.get('filename') || `file_${Date.now()}`;
@@ -128,7 +127,7 @@ const server = http.createServer((req, res) => {
     req.pipe(writeStream);
     req.on('end', () => {
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ success: true, path: targetPath, filename }));
+      res.end(JSON.stringify({ success: true, path: targetPath, filename, dir: destFolder }));
     });
     req.on('error', (err) => {
       res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -562,7 +561,7 @@ const server = http.createServer((req, res) => {
       border: 1px solid #30363d;
       flex: 1;
     }
-    .fm-actions { display: flex; gap: 8px; }
+    .fm-actions { display: flex; gap: 8px; flex-wrap: wrap; }
     .table-container {
       border: 1px solid #30363d;
       border-radius: 10px;
@@ -590,7 +589,7 @@ const server = http.createServer((req, res) => {
     .drop-zone:hover, .drop-zone.dragover { border-color: #58a6ff; background: rgba(88, 166, 255, 0.05); }
     .drop-icon { font-size: 36px; margin-bottom: 12px; display: block; }
     .file-input { display: none; }
-    .upload-progress { margin-top: 14px; font-size: 12px; color: #3fb950; display: none; }
+    .upload-progress { margin-top: 14px; font-size: 13px; color: #3fb950; display: none; padding: 10px; background: rgba(46, 160, 67, 0.1); border-radius: 8px; border: 1px solid rgba(46, 160, 67, 0.3); }
 
     /* Footer */
     .footer {
@@ -720,12 +719,14 @@ const server = http.createServer((req, res) => {
         <div class="fm-toolbar">
           <div class="path-display" id="currentPath">/</div>
           <div class="fm-actions">
-            <button class="btn-refresh" onclick="loadFiles('/')">🏠 System Root (/)</button>
+            <button class="btn-refresh" onclick="triggerUploadForCurrentDir()">📤 Upload Ke Folder Ini</button>
+            <button class="btn-refresh" onclick="loadFiles('/')">🏠 Root (/)</button>
             <button class="btn-refresh" onclick="loadFiles('/root')">📁 /root</button>
             <button class="btn-refresh" onclick="mkdirPrompt()">➕ Buat Folder</button>
-            <button class="btn-refresh" onclick="loadFiles(currentDir)">🔄 Reload Files</button>
+            <button class="btn-refresh" onclick="loadFiles(currentDir)">🔄 Reload</button>
           </div>
         </div>
+        <input type="file" id="fmFileSelector" class="file-input" multiple onchange="handleFileSelect(this.files)">
         <div class="table-container">
           <table>
             <thead>
@@ -745,10 +746,14 @@ const server = http.createServer((req, res) => {
 
       <!-- Tab 3: File Upload -->
       <div id="tab-upload" class="tab-content">
+        <div style="margin-bottom: 16px; background: #0d1117; padding: 14px; border-radius: 10px; border: 1px solid #30363d; display: flex; align-items: center; justify-content: space-between;">
+          <span style="font-size:13px; color:#8b949e;">Folder Tujuan Upload Saat Ini:</span>
+          <span style="font-family:monospace; font-size:14px; color:#58a6ff; font-weight:700;" id="uploadTargetDirDisplay">/</span>
+        </div>
         <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileSelector').click()">
           <span class="drop-icon">☁️</span>
           <p style="font-weight:600;font-size:15px;margin-bottom:6px;">Tarik & Lepas File Di Sini (Semua Jenis File)</p>
-          <p style="font-size:13px;color:#8b949e;">atau klik untuk memilih file dari komputer Anda</p>
+          <p style="font-size:13px;color:#8b949e;">File akan diunggah langsung ke folder aktif di atas</p>
           <input type="file" id="fileSelector" class="file-input" multiple onchange="handleFileSelect(this.files)">
         </div>
         <div class="upload-progress" id="uploadProgress">Uploading...</div>
@@ -780,6 +785,7 @@ const server = http.createServer((req, res) => {
       btn.classList.add('active');
       document.getElementById('tab-' + name).classList.add('active');
       if (name === 'files') loadFiles(currentDir);
+      if (name === 'upload') updateUploadTargetDisplay();
     }
 
     function copyText(elementId, btn) {
@@ -804,6 +810,14 @@ const server = http.createServer((req, res) => {
       setTimeout(() => icon.classList.remove('spinning'), 800);
     }
 
+    function updateUploadTargetDisplay() {
+      document.getElementById('uploadTargetDirDisplay').innerText = currentDir;
+    }
+
+    function triggerUploadForCurrentDir() {
+      document.getElementById('fmFileSelector').click();
+    }
+
     // --- TERMINAL CONSOLE LOGIC ---
     function runCmd() {
       const input = document.getElementById('termInput');
@@ -826,6 +840,7 @@ const server = http.createServer((req, res) => {
           currentDir = data.cwd;
           document.getElementById('termPrompt').innerText = \`root@\${vpsHostname}:\${currentDir}#\`;
           document.getElementById('currentPath').innerText = currentDir;
+          updateUploadTargetDisplay();
         }
       })
       .catch(err => appendTerm(\`[EXEC ERROR] \${err.message}\n\`));
@@ -851,6 +866,7 @@ const server = http.createServer((req, res) => {
       currentDir = dirPath;
       document.getElementById('currentPath').innerText = currentDir;
       document.getElementById('termPrompt').innerText = \`root@\${vpsHostname}:\${currentDir}#\`;
+      updateUploadTargetDisplay();
       const tbody = document.getElementById('fileTableBody');
       tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#8b949e;">Loading files...</td></tr>';
 
@@ -935,16 +951,17 @@ const server = http.createServer((req, res) => {
       });
     }
 
-    // --- FILE UPLOAD LOGIC ---
+    // --- FILE UPLOAD LOGIC (SYNCS DIRECTORY AUTOMATICALLY) ---
     function handleFileSelect(files) {
       if (!files || files.length === 0) return;
+      const targetDir = currentDir || '/root';
       const prog = document.getElementById('uploadProgress');
       prog.style.display = 'block';
       
       let uploaded = 0;
       Array.from(files).forEach(file => {
-        prog.innerText = \`Uploading \${file.name}...\`;
-        fetch(\`/api/upload?dir=\${encodeURIComponent(currentDir)}&filename=\${encodeURIComponent(file.name)}\`, {
+        prog.innerHTML = \`Mengunggah <b>\${file.name}</b> ke <code>\${targetDir}</code>...\`;
+        fetch(\`/api/upload?dir=\${encodeURIComponent(targetDir)}&filename=\${encodeURIComponent(file.name)}\`, {
           method: 'POST',
           body: file
         })
@@ -952,13 +969,13 @@ const server = http.createServer((req, res) => {
         .then(data => {
           uploaded++;
           if (uploaded === files.length) {
-            prog.innerText = \`✅ Sukses mengunggah \${files.length} file ke \${currentDir}!\`;
+            prog.innerHTML = \`✅ Sukses mengunggah <b>\${files.length} file</b> ke <code>\${targetDir}</code>!\`;
             setTimeout(() => prog.style.display = 'none', 4000);
-            loadFiles(currentDir);
+            loadFiles(targetDir);
           }
         })
         .catch(err => {
-          prog.innerText = \`❌ Gagal mengunggah \${file.name}: \${err.message}\`;
+          prog.innerHTML = \`❌ Gagal mengunggah \${file.name}: \${err.message}\`;
         });
       });
     }
