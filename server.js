@@ -18,7 +18,7 @@ const server = http.createServer((req, res) => {
   const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const pathname = urlObj.pathname;
 
-  // --- API: EXECUTE SHELL COMMAND (FULL VPS SYSTEM ACCESS) ---
+  // --- API: EXECUTE SHELL COMMAND ---
   if (req.method === 'POST' && pathname === '/api/exec') {
     let body = '';
     req.on('data', chunk => body += chunk);
@@ -77,7 +77,68 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // --- API: LIST FILES IN ANY VPS DIRECTORY ---
+  // --- API: READ FILE CONTENT ---
+  if (req.method === 'GET' && pathname === '/api/readfile') {
+    const filePath = urlObj.searchParams.get('path');
+    if (!filePath || !fs.existsSync(filePath)) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'File not found' }));
+    }
+
+    try {
+      const stats = fs.statSync(filePath);
+      if (stats.isDirectory()) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Cannot edit a directory' }));
+      }
+
+      if (stats.size > 5 * 1024 * 1024) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'File is too large to edit via web editor (> 5MB)' }));
+      }
+
+      const content = fs.readFileSync(filePath, 'utf-8');
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({
+        success: true,
+        path: filePath,
+        name: path.basename(filePath),
+        content: content
+      }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // --- API: SAVE FILE CONTENT ---
+  if (req.method === 'POST' && pathname === '/api/savefile') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try {
+        const data = JSON.parse(body || '{}');
+        const filePath = data.path;
+        const content = data.content;
+
+        if (!filePath) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'Invalid file path' }));
+        }
+
+        fs.writeFileSync(filePath, content, 'utf-8');
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ success: true, path: filePath }));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  // --- API: LIST FILES IN DIRECTORY ---
   if (req.method === 'GET' && pathname === '/api/files') {
     let targetPath = urlObj.searchParams.get('path') || '/';
     if (!fs.existsSync(targetPath)) targetPath = '/';
@@ -116,7 +177,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // --- API: UPLOAD FILE TO SPECIFIED VPS FOLDER ---
+  // --- API: UPLOAD FILE ---
   if (req.method === 'POST' && pathname === '/api/upload') {
     const targetDir = urlObj.searchParams.get('dir') || '/root';
     const filename = urlObj.searchParams.get('filename') || `file_${Date.now()}`;
@@ -576,6 +637,113 @@ const server = http.createServer((req, res) => {
     .item-name { display: flex; align-items: center; gap: 8px; font-weight: 500; cursor: pointer; color: #f0f6fc; }
     .item-name:hover { color: #58a6ff; }
 
+    .btn-action-sm {
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid transparent;
+      margin-right: 4px;
+    }
+    .btn-edit { background: rgba(88, 166, 255, 0.15); color: #58a6ff; border-color: rgba(88, 166, 255, 0.4); }
+    .btn-edit:hover { background: #1f6feb; color: #fff; }
+    .btn-del { background: rgba(248, 81, 73, 0.15); color: #f85149; border-color: rgba(248, 81, 73, 0.4); }
+    .btn-del:hover { background: #f85149; color: #fff; }
+
+    /* Code Editor Modal */
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; width: 100vw; height: 100vh;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(8px);
+      display: none;
+      justify-content: center;
+      align-items: center;
+      z-index: 9999;
+      padding: 20px;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal-box {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 14px;
+      width: 100%;
+      max-width: 900px;
+      height: 85vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 25px 60px rgba(0, 0, 0, 0.8);
+    }
+    .modal-header {
+      background: #0d1117;
+      padding: 14px 20px;
+      border-bottom: 1px solid #21262d;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .modal-title {
+      font-family: monospace;
+      font-size: 14px;
+      color: #79c0ff;
+      font-weight: 700;
+    }
+    .modal-close {
+      background: transparent;
+      border: none;
+      color: #8b949e;
+      font-size: 18px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    .modal-close:hover { color: #f85149; }
+    .editor-body {
+      flex: 1;
+      padding: 16px;
+      background: #0d1117;
+      display: flex;
+      flex-direction: column;
+    }
+    .code-textarea {
+      flex: 1;
+      width: 100%;
+      background: #090d16;
+      color: #e6edf3;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 14px;
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.5;
+      resize: none;
+      outline: none;
+      tab-size: 2;
+    }
+    .code-textarea:focus { border-color: #58a6ff; }
+    .modal-footer {
+      background: #161b22;
+      padding: 12px 20px;
+      border-top: 1px solid #21262d;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .btn-save-file {
+      background: #238636;
+      color: #fff;
+      border: none;
+      padding: 8px 18px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .btn-save-file:hover { background: #2ea043; }
+    .save-status { font-size: 13px; color: #3fb950; display: none; font-weight: 600; }
+
     /* Upload Area */
     .drop-zone {
       border: 2px dashed #30363d;
@@ -767,8 +935,30 @@ const server = http.createServer((req, res) => {
   </div>
 
 
+  <!-- ================= WEB CODE EDITOR MODAL ================= -->
+  <div class="modal-overlay" id="editorModal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <div class="modal-title">✏️ Edit File: <span id="editingFileName" style="color:#bc8cff;">-</span></div>
+        <button class="modal-close" onclick="closeEditorModal()">✕</button>
+      </div>
+      <div class="editor-body">
+        <textarea class="code-textarea" id="codeEditorTextarea" spellcheck="false" placeholder="Loading file content..."></textarea>
+      </div>
+      <div class="modal-footer">
+        <span class="save-status" id="saveStatus">✅ File berhasil disimpan!</span>
+        <div style="display:flex; gap:10px;">
+          <button class="btn-back" onclick="closeEditorModal()">Batal</button>
+          <button class="btn-save-file" onclick="saveFileContent()">💾 Simpan File</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
   <script>
     let currentDir = '/';
+    let currentlyEditingPath = '';
     const vpsHostname = '${hostname}';
 
     function showPage(pageId) {
@@ -895,7 +1085,7 @@ const server = http.createServer((req, res) => {
             const sizeStr = item.isDir ? '-' : formatBytes(item.size);
             const dateStr = new Date(item.mtime).toLocaleString('id-ID');
             const icon = item.isDir ? '📁' : '📄';
-            const actionClick = item.isDir ? \`loadFiles('\${escapeJs(item.path)}')\` : '';
+            const actionClick = item.isDir ? \`loadFiles('\${escapeJs(item.path)}')\` : \`openEditorModal('\${escapeJs(item.path)}')\`;
             
             html += \`<tr>
               <td>
@@ -907,7 +1097,8 @@ const server = http.createServer((req, res) => {
               <td>\${sizeStr}</td>
               <td style="color:#8b949e;">\${dateStr}</td>
               <td>
-                <button class="btn-del" onclick="deleteItem('\${escapeJs(item.path)}')">Hapus</button>
+                \${!item.isDir ? \`<button class="btn-action-sm btn-edit" onclick="openEditorModal('\${escapeJs(item.path)}')">Edit ✏️</button>\` : ''}
+                <button class="btn-action-sm btn-del" onclick="deleteItem('\${escapeJs(item.path)}')">Hapus</button>
               </td>
             </tr>\`;
           });
@@ -917,6 +1108,66 @@ const server = http.createServer((req, res) => {
       .catch(err => {
         tbody.innerHTML = \`<tr><td colspan="4" style="color:#f85149;">Failed to load files: \${err.message}</td></tr>\`;
       });
+    }
+
+    // --- CODE EDITOR LOGIC ---
+    function openEditorModal(filePath) {
+      currentlyEditingPath = filePath;
+      document.getElementById('editingFileName').innerText = filePath;
+      document.getElementById('codeEditorTextarea').value = 'Loading file content...';
+      document.getElementById('saveStatus').style.display = 'none';
+      document.getElementById('editorModal').classList.add('active');
+
+      fetch('/api/readfile?path=' + encodeURIComponent(filePath))
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          document.getElementById('codeEditorTextarea').value = data.content;
+        } else {
+          alert('Gagal membuka file: ' + (data.error || 'Unknown error'));
+          closeEditorModal();
+        }
+      })
+      .catch(err => {
+        alert('Gagal membaca file: ' + err.message);
+        closeEditorModal();
+      });
+    }
+
+    function saveFileContent() {
+      if (!currentlyEditingPath) return;
+      const content = document.getElementById('codeEditorTextarea').value;
+      const status = document.getElementById('saveStatus');
+      status.innerText = 'Saving...';
+      status.style.color = '#79c0ff';
+      status.style.display = 'inline';
+
+      fetch('/api/savefile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: currentlyEditingPath, content: content })
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          status.innerText = '✅ File berhasil disimpan!';
+          status.style.color = '#3fb950';
+          setTimeout(() => status.style.display = 'none', 3000);
+          loadFiles(currentDir);
+        } else {
+          status.innerText = '❌ Gagal menyimpan: ' + data.error;
+          status.style.color = '#f85149';
+        }
+      })
+      .catch(err => {
+        status.innerText = '❌ Gagal menyimpan: ' + err.message;
+        status.style.color = '#f85149';
+      });
+    }
+
+    function closeEditorModal() {
+      document.getElementById('editorModal').classList.remove('active');
+      currentlyEditingPath = '';
     }
 
     function deleteItem(itemPath) {
@@ -951,7 +1202,7 @@ const server = http.createServer((req, res) => {
       });
     }
 
-    // --- FILE UPLOAD LOGIC (SYNCS DIRECTORY AUTOMATICALLY) ---
+    // --- FILE UPLOAD LOGIC ---
     function handleFileSelect(files) {
       if (!files || files.length === 0) return;
       const targetDir = currentDir || '/root';
