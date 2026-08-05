@@ -18,17 +18,50 @@ const server = http.createServer((req, res) => {
   const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const pathname = urlObj.pathname;
 
-  // --- API: EXECUTE SHELL COMMAND ---
+  // --- API: EXECUTE SHELL COMMAND (FULL VPS SYSTEM ACCESS) ---
   if (req.method === 'POST' && pathname === '/api/exec') {
     let body = '';
     req.on('data', chunk => body += chunk);
     req.on('end', () => {
       try {
         const data = JSON.parse(body || '{}');
-        const command = data.command || 'pwd';
-        const cwd = data.cwd && fs.existsSync(data.cwd) ? data.cwd : '/root';
+        const rawCmd = (data.command || 'pwd').trim();
+        let cwd = data.cwd && fs.existsSync(data.cwd) ? data.cwd : '/';
         
-        exec(command, { cwd, maxBuffer: 10 * 1024 * 1024, timeout: 60000 }, (error, stdout, stderr) => {
+        // Handle "cd <path>" command directly to update working directory
+        if (rawCmd.startsWith('cd ')) {
+          const targetDir = rawCmd.substring(3).trim();
+          const resolvedPath = path.resolve(cwd, targetDir);
+          if (fs.existsSync(resolvedPath) && fs.statSync(resolvedPath).isDirectory()) {
+            cwd = resolvedPath;
+            res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+            return res.end(JSON.stringify({
+              stdout: `Changed directory to: ${cwd}\n`,
+              stderr: '',
+              code: 0,
+              cwd: cwd
+            }));
+          } else {
+            res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+            return res.end(JSON.stringify({
+              stdout: '',
+              stderr: `bash: cd: ${targetDir}: No such file or directory\n`,
+              code: 1,
+              cwd: cwd
+            }));
+          }
+        } else if (rawCmd === 'cd') {
+          cwd = '/root';
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+          return res.end(JSON.stringify({
+            stdout: `Changed directory to: /root\n`,
+            stderr: '',
+            code: 0,
+            cwd: '/root'
+          }));
+        }
+
+        exec(rawCmd, { cwd, maxBuffer: 10 * 1024 * 1024, timeout: 60000 }, (error, stdout, stderr) => {
           res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
           res.end(JSON.stringify({
             stdout: stdout || '',
@@ -45,10 +78,10 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // --- API: LIST FILES IN DIRECTORY ---
+  // --- API: LIST FILES IN ANY VPS DIRECTORY (SYSTEM ROOT AND SUBDIRECTORIES) ---
   if (req.method === 'GET' && pathname === '/api/files') {
-    let targetPath = urlObj.searchParams.get('path') || '/root';
-    if (!fs.existsSync(targetPath)) targetPath = '/root';
+    let targetPath = urlObj.searchParams.get('path') || '/';
+    if (!fs.existsSync(targetPath)) targetPath = '/';
 
     try {
       const stats = fs.statSync(targetPath);
@@ -84,7 +117,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // --- API: UPLOAD FILE (ANY FILE TYPE) ---
+  // --- API: UPLOAD FILE (ANY TYPE TO ANY VPS FOLDER) ---
   if (req.method === 'POST' && pathname === '/api/upload') {
     const targetDir = urlObj.searchParams.get('dir') || '/root';
     const filename = urlObj.searchParams.get('filename') || `file_${Date.now()}`;
@@ -154,6 +187,7 @@ const server = http.createServer((req, res) => {
   if (req.method === 'GET' && (pathname === '/' || pathname === '/index.html')) {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
 
+    const hostname = os.hostname();
     let ngrokSshCmd = '';
     const options = {
       hostname: '127.0.0.1',
@@ -205,7 +239,7 @@ const server = http.createServer((req, res) => {
       padding: 24px 16px;
     }
 
-    .page-screen { display: none; width: 100%; max-width: 900px; }
+    .page-screen { display: none; width: 100%; max-width: 920px; }
     .page-screen.active { display: block; }
 
     .card {
@@ -447,8 +481,8 @@ const server = http.createServer((req, res) => {
     }
     .terminal-output {
       padding: 16px;
-      min-height: 220px;
-      max-height: 400px;
+      min-height: 250px;
+      max-height: 420px;
       overflow-y: auto;
       font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
       font-size: 13px;
@@ -651,8 +685,8 @@ const server = http.createServer((req, res) => {
 
       <!-- Tabs Navigation -->
       <div class="tabs">
-        <button class="tab-btn active" onclick="switchTab('terminal', this)">💻 Console Terminal</button>
-        <button class="tab-btn" onclick="switchTab('files', this)">📁 Root File Manager</button>
+        <button class="tab-btn active" onclick="switchTab('terminal', this)">💻 VPS Linux Console</button>
+        <button class="tab-btn" onclick="switchTab('files', this)">📁 System File Manager (/)</button>
         <button class="tab-btn" onclick="switchTab('upload', this)">📤 Upload File</button>
       </div>
 
@@ -660,23 +694,23 @@ const server = http.createServer((req, res) => {
       <div id="tab-terminal" class="tab-content active">
         <div class="terminal-window">
           <div class="terminal-header">
-            <span>Linux Bash Console (/root)</span>
-            <span style="color:#3fb950;">Active Session</span>
+            <span>root@${hostname}:/# (Linux Full VPS Console)</span>
+            <span style="color:#3fb950;">Active Connection</span>
           </div>
-          <div class="terminal-output" id="termOutput">VPS Console ready. Enter any command to execute inside container...\n</div>
+          <div class="terminal-output" id="termOutput">Linux VPS Shell Connected. You have full root privileges across all directories (/root, /etc, /var, /tmp, /usr, etc.)...\n</div>
           <div class="terminal-input-bar">
-            <span class="prompt-label" id="termPrompt">root@container:~#</span>
-            <input type="text" class="term-input" id="termInput" placeholder="Ketik perintah (contoh: ls -la, pwd, node -v)..." onkeydown="if(event.key==='Enter') runCmd()">
+            <span class="prompt-label" id="termPrompt">root@${hostname}:/#</span>
+            <input type="text" class="term-input" id="termInput" placeholder="Ketik perintah (contoh: cd /root, ls -la, pwd, apt update)..." onkeydown="if(event.key==='Enter') runCmd()">
             <button class="btn-exec" onclick="runCmd()">Eksekusi</button>
           </div>
         </div>
         <div class="quick-cmds">
-          <button class="btn-chip" onclick="quickCmd('ls -la /root')">ls -la /root</button>
+          <button class="btn-chip" onclick="quickCmd('cd /root && ls -la')">cd /root</button>
+          <button class="btn-chip" onclick="quickCmd('cd / && ls -la')">cd / (System Root)</button>
           <button class="btn-chip" onclick="quickCmd('pwd')">pwd</button>
           <button class="btn-chip" onclick="quickCmd('free -m')">free -m (RAM)</button>
           <button class="btn-chip" onclick="quickCmd('df -h')">df -h (Disk)</button>
           <button class="btn-chip" onclick="quickCmd('uname -a')">uname -a</button>
-          <button class="btn-chip" onclick="quickCmd('node -v')">node -v</button>
           <button class="btn-chip" onclick="clearTerm()">Clear Screen</button>
         </div>
       </div>
@@ -684,9 +718,11 @@ const server = http.createServer((req, res) => {
       <!-- Tab 2: File Manager -->
       <div id="tab-files" class="tab-content">
         <div class="fm-toolbar">
-          <div class="path-display" id="currentPath">/root</div>
+          <div class="path-display" id="currentPath">/</div>
           <div class="fm-actions">
-            <button class="btn-refresh" onclick="mkdirPrompt()">📁 Buat Folder</button>
+            <button class="btn-refresh" onclick="loadFiles('/')">🏠 System Root (/)</button>
+            <button class="btn-refresh" onclick="loadFiles('/root')">📁 /root</button>
+            <button class="btn-refresh" onclick="mkdirPrompt()">➕ Buat Folder</button>
             <button class="btn-refresh" onclick="loadFiles(currentDir)">🔄 Reload Files</button>
           </div>
         </div>
@@ -727,7 +763,8 @@ const server = http.createServer((req, res) => {
 
 
   <script>
-    let currentDir = '/root';
+    let currentDir = '/';
+    const vpsHostname = '${hostname}';
 
     function showPage(pageId) {
       document.querySelectorAll('.page-screen').forEach(p => p.classList.remove('active'));
@@ -773,7 +810,7 @@ const server = http.createServer((req, res) => {
       const cmd = input.value.trim();
       if (!cmd) return;
       
-      appendTerm(\`root@container:\${currentDir}# \${cmd}\n\`);
+      appendTerm(\`root@\${vpsHostname}:\${currentDir}# \${cmd}\n\`);
       input.value = '';
 
       fetch('/api/exec', {
@@ -784,10 +821,11 @@ const server = http.createServer((req, res) => {
       .then(res => res.json())
       .then(data => {
         if (data.stdout) appendTerm(data.stdout);
-        if (data.stderr) appendTerm(\`[ERROR] \${data.stderr}\n\`);
+        if (data.stderr) appendTerm(data.stderr);
         if (data.cwd) {
           currentDir = data.cwd;
-          document.getElementById('termPrompt').innerText = \`root@container:\${currentDir}#\`;
+          document.getElementById('termPrompt').innerText = \`root@\${vpsHostname}:\${currentDir}#\`;
+          document.getElementById('currentPath').innerText = currentDir;
         }
       })
       .catch(err => appendTerm(\`[EXEC ERROR] \${err.message}\n\`));
@@ -812,7 +850,7 @@ const server = http.createServer((req, res) => {
     function loadFiles(dirPath) {
       currentDir = dirPath;
       document.getElementById('currentPath').innerText = currentDir;
-      document.getElementById('termPrompt').innerText = \`root@container:\${currentDir}#\`;
+      document.getElementById('termPrompt').innerText = \`root@\${vpsHostname}:\${currentDir}#\`;
       const tbody = document.getElementById('fileTableBody');
       tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#8b949e;">Loading files...</td></tr>';
 
@@ -825,7 +863,7 @@ const server = http.createServer((req, res) => {
         }
 
         let html = '';
-        if (dirPath !== '/' && dirPath !== '/root') {
+        if (dirPath !== '/') {
           const parentDir = dirPath.substring(0, dirPath.lastIndexOf('/')) || '/';
           html += \`<tr>
             <td colspan="4">
