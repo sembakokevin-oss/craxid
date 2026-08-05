@@ -3,19 +3,12 @@
 # Ensure /run/sshd directory exists
 mkdir -p /run/sshd
 
-# Configure SSH root login and password
+# Configure SSHD to listen on port 2222 internally (so PORT=22 can be used by HTTP healthcheck)
+echo "Port 2222" >> /etc/ssh/sshd_config
 echo "PermitRootLogin yes" >> /etc/ssh/sshd_config
 echo "root:sembakokevin-oss" | chpasswd
 
-# Start Ngrok tunnel on SSH port 22 in background
-/ngrok tcp --authtoken "${NGROK_TOKEN}" --region "${REGION:-ap}" 22 &
-
-sleep 5
-
-# Print SSH info to container logs
-curl -s http://localhost:4040/api/tunnels | python3 -c "import sys, json; print('ssh info:\n', 'ssh', 'root@' + json.load(sys.stdin)['tunnels'][0]['public_url'][6:].replace(':', ' -p '), '\nROOT Password:sembakokevin-oss')" || echo "\nError: NGROK_TOKEN Failed\n"
-
-# Start Python HTTP Healthcheck Server on Railway PORT to satisfy healthchecks
+# Start Python HTTP Healthcheck Server IMMEDIATELY on $PORT (handles PORT=22 or PORT=8080)
 python3 -c '
 import http.server, socketserver, os, json, urllib.request
 
@@ -25,7 +18,7 @@ class HealthHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Content-type", "text/html")
         self.end_headers()
         try:
-            req = urllib.request.urlopen("http://localhost:4040/api/tunnels")
+            req = urllib.request.urlopen("http://localhost:4040/api/tunnels", timeout=2)
             data = json.loads(req.read().decode())
             pub_url = data["tunnels"][0]["public_url"]
             ssh_cmd = "ssh root@" + pub_url[6:].replace(":", " -p ")
@@ -46,13 +39,30 @@ class HealthHandler(http.server.SimpleHTTPRequestHandler):
 </body>
 </html>"""
             self.wfile.write(html.encode())
-        except Exception as e:
-            self.wfile.write(b"<html><body style=\"background:#0d1117;color:#fff;padding:40px;\"><h2>SSH Container Active</h2><p>Ngrok tunnel starting...</p></body></html>")
+        except Exception:
+            self.wfile.write(b"<html><body style=\"background:#0d1117;color:#fff;padding:40px;\"><h2>SSH Container Active</h2><p>Healthcheck OK - Ngrok starting...</p></body></html>")
 
-port = int(os.environ.get("PORT", 8080))
-with socketserver.TCPServer(("", port), HealthHandler) as httpd:
+    def log_message(self, format, *args):
+        return
+
+port_str = os.environ.get("PORT", "8080")
+try:
+    port = int(port_str)
+except ValueError:
+    port = 8080
+
+socketserver.TCPServer.allow_reuse_address = True
+with socketserver.TCPServer(("0.0.0.0", port), HealthHandler) as httpd:
     httpd.serve_forever()
 ' &
+
+# Start Ngrok tunnel on internal SSH port 2222 in background
+/ngrok tcp --authtoken "${NGROK_TOKEN}" --region "${REGION:-ap}" 2222 &
+
+sleep 3
+
+# Print SSH info to container logs
+curl -s http://localhost:4040/api/tunnels | python3 -c "import sys, json; print('ssh info:\n', 'ssh', 'root@' + json.load(sys.stdin)['tunnels'][0]['public_url'][6:].replace(':', ' -p '), '\nROOT Password:sembakokevin-oss')" 2>/dev/null || echo "Ngrok tunnel initializing..."
 
 # Start SSH daemon in foreground
 exec /usr/sbin/sshd -D
