@@ -18,7 +18,7 @@ const server = http.createServer((req, res) => {
   const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const pathname = urlObj.pathname;
 
-  // --- API: EXECUTE SHELL COMMAND WITH REAL TTY COLUMN FORMATTING ---
+  // --- API: EXECUTE SHELL COMMAND ---
   if (req.method === 'POST' && pathname === '/api/exec') {
     let body = '';
     req.on('data', chunk => body += chunk);
@@ -60,21 +60,19 @@ const server = http.createServer((req, res) => {
           }));
         }
 
-        // If user runs plain 'ls' or 'ls <path>', add column flag '-C' for multi-column horizontal display
         if (rawCmd === 'ls') {
           rawCmd = 'ls -C';
         } else if (rawCmd.startsWith('ls ') && !rawCmd.includes('-1') && !rawCmd.includes('-l') && !rawCmd.includes('-C')) {
           rawCmd = rawCmd.replace(/^ls\s+/, 'ls -C ');
         }
 
-        // Pass COLUMNS=110 environment variable so Linux CLI formats columns horizontally
         const customEnv = Object.assign({}, process.env, {
-          COLUMNS: '110',
-          LINES: '30',
+          COLUMNS: '100',
+          LINES: '40',
           TERM: 'xterm-256color'
         });
 
-        exec(rawCmd, { cwd, env: customEnv, maxBuffer: 10 * 1024 * 1024, timeout: 60000 }, (error, stdout, stderr) => {
+        exec(rawCmd, { cwd, env: customEnv, maxBuffer: 10 * 1024 * 1024, timeout: 120000 }, (error, stdout, stderr) => {
           res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
           res.end(JSON.stringify({
             stdout: stdout || '',
@@ -313,7 +311,28 @@ const server = http.createServer((req, res) => {
       padding: 24px 16px;
     }
 
-    .page-screen { display: none; width: 100%; max-width: 920px; }
+    /* Custom Sleek Dark Glassmorphism Scrollbars */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0d1117;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #30363d;
+      border-radius: 4px;
+      border: 2px solid #0d1117;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #58a6ff;
+    }
+    ::-webkit-scrollbar-corner {
+      background: #0d1117;
+    }
+
+    .page-screen { display: none; width: 100%; max-width: 960px; }
     .page-screen.active { display: block; }
 
     .card {
@@ -536,17 +555,18 @@ const server = http.createServer((req, res) => {
     .tab-content { display: none; }
     .tab-content.active { display: block; }
 
-    /* Terminal Console Precision Grid Layout */
+    /* EXPANDED TERMINAL WINDOW DESIGN */
     .terminal-window {
       background: #0d1117;
       border: 1px solid #30363d;
-      border-radius: 10px;
+      border-radius: 12px;
       overflow: hidden;
+      box-shadow: 0 12px 35px rgba(0, 0, 0, 0.5);
     }
     .terminal-header {
       background: #161b22;
-      padding: 10px 16px;
-      font-size: 12px;
+      padding: 12px 18px;
+      font-size: 13px;
       color: #8b949e;
       border-bottom: 1px solid #21262d;
       display: flex;
@@ -554,29 +574,31 @@ const server = http.createServer((req, res) => {
       align-items: center;
     }
     .terminal-output {
-      padding: 16px;
-      min-height: 260px;
-      max-height: 440px;
+      padding: 20px;
+      min-height: 420px;
+      max-height: 620px;
       overflow-x: auto;
       overflow-y: auto;
       font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, 'Courier New', monospace;
-      font-size: 13px;
-      line-height: 1.4;
+      font-size: 13.5px;
+      line-height: 1.5;
       color: #c9d1d9;
-      white-space: pre;
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-wrap: anywhere;
     }
     .terminal-input-bar {
       display: flex;
       background: #161b22;
       border-top: 1px solid #21262d;
-      padding: 8px 12px;
+      padding: 10px 16px;
       align-items: center;
-      gap: 10px;
+      gap: 12px;
     }
     .prompt-label {
       color: #3fb950;
       font-family: monospace;
-      font-size: 13px;
+      font-size: 14px;
       font-weight: 700;
       white-space: nowrap;
     }
@@ -593,30 +615,31 @@ const server = http.createServer((req, res) => {
       background: #1f6feb;
       color: #fff;
       border: none;
-      padding: 6px 14px;
-      border-radius: 6px;
-      font-size: 12px;
-      font-weight: 600;
+      padding: 8px 18px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 700;
       cursor: pointer;
     }
     .btn-exec:hover { background: #388bfd; }
     .quick-cmds {
       display: flex;
       gap: 8px;
-      margin-top: 12px;
+      margin-top: 14px;
       flex-wrap: wrap;
     }
     .btn-chip {
       background: #161b22;
       border: 1px solid #30363d;
       color: #8b949e;
-      padding: 4px 10px;
-      border-radius: 6px;
-      font-size: 11px;
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 12px;
       font-family: monospace;
       cursor: pointer;
+      transition: all 0.2s;
     }
-    .btn-chip:hover { color: #58a6ff; border-color: #58a6ff; }
+    .btn-chip:hover { color: #58a6ff; border-color: #58a6ff; background: rgba(88, 166, 255, 0.1); }
 
     /* File Manager */
     .fm-toolbar {
@@ -684,7 +707,7 @@ const server = http.createServer((req, res) => {
       border: 1px solid #30363d;
       border-radius: 14px;
       width: 100%;
-      max-width: 900px;
+      max-width: 920px;
       height: 85vh;
       display: flex;
       flex-direction: column;
@@ -730,7 +753,7 @@ const server = http.createServer((req, res) => {
       border-radius: 8px;
       padding: 14px;
       font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-      font-size: 13px;
+      font-size: 13.5px;
       line-height: 1.5;
       resize: none;
       outline: none;
@@ -763,16 +786,16 @@ const server = http.createServer((req, res) => {
     .drop-zone {
       border: 2px dashed #30363d;
       border-radius: 12px;
-      padding: 40px 20px;
+      padding: 45px 20px;
       text-align: center;
       background: #0d1117;
       cursor: pointer;
       transition: all 0.2s;
     }
     .drop-zone:hover, .drop-zone.dragover { border-color: #58a6ff; background: rgba(88, 166, 255, 0.05); }
-    .drop-icon { font-size: 36px; margin-bottom: 12px; display: block; }
+    .drop-icon { font-size: 38px; margin-bottom: 12px; display: block; }
     .file-input { display: none; }
-    .upload-progress { margin-top: 14px; font-size: 13px; color: #3fb950; display: none; padding: 10px; background: rgba(46, 160, 67, 0.1); border-radius: 8px; border: 1px solid rgba(46, 160, 67, 0.3); }
+    .upload-progress { margin-top: 14px; font-size: 13px; color: #3fb950; display: none; padding: 12px; background: rgba(46, 160, 67, 0.1); border-radius: 8px; border: 1px solid rgba(46, 160, 67, 0.3); }
 
     /* Footer */
     .footer {
@@ -882,7 +905,7 @@ const server = http.createServer((req, res) => {
           <div class="terminal-output" id="termOutput">Linux VPS Shell Connected. You have full root privileges across all directories (/root, /etc, /var, /tmp, /usr, etc.)...\n</div>
           <div class="terminal-input-bar">
             <span class="prompt-label" id="termPrompt">root@${hostname}:/#</span>
-            <input type="text" class="term-input" id="termInput" placeholder="Ketik perintah (contoh: ls, cd /root, pwd, apt update)..." onkeydown="if(event.key==='Enter') runCmd()">
+            <input type="text" class="term-input" id="termInput" placeholder="Ketik perintah (contoh: npm install, ls, cd /root, apt update)..." onkeydown="if(event.key==='Enter') runCmd()">
             <button class="btn-exec" onclick="runCmd()">Eksekusi</button>
           </div>
         </div>
