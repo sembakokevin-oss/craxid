@@ -18,14 +18,14 @@ const server = http.createServer((req, res) => {
   const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const pathname = urlObj.pathname;
 
-  // --- API: EXECUTE SHELL COMMAND ---
+  // --- API: EXECUTE SHELL COMMAND WITH REAL TTY COLUMN FORMATTING ---
   if (req.method === 'POST' && pathname === '/api/exec') {
     let body = '';
     req.on('data', chunk => body += chunk);
     req.on('end', () => {
       try {
         const data = JSON.parse(body || '{}');
-        const rawCmd = (data.command || 'pwd').trim();
+        let rawCmd = (data.command || 'pwd').trim();
         let cwd = data.cwd && fs.existsSync(data.cwd) ? data.cwd : '/';
         
         if (rawCmd.startsWith('cd ')) {
@@ -60,7 +60,21 @@ const server = http.createServer((req, res) => {
           }));
         }
 
-        exec(rawCmd, { cwd, maxBuffer: 10 * 1024 * 1024, timeout: 60000 }, (error, stdout, stderr) => {
+        // If user runs plain 'ls' or 'ls <path>', add column flag '-C' for multi-column horizontal display
+        if (rawCmd === 'ls') {
+          rawCmd = 'ls -C';
+        } else if (rawCmd.startsWith('ls ') && !rawCmd.includes('-1') && !rawCmd.includes('-l') && !rawCmd.includes('-C')) {
+          rawCmd = rawCmd.replace(/^ls\s+/, 'ls -C ');
+        }
+
+        // Pass COLUMNS=110 environment variable so Linux CLI formats columns horizontally
+        const customEnv = Object.assign({}, process.env, {
+          COLUMNS: '110',
+          LINES: '30',
+          TERM: 'xterm-256color'
+        });
+
+        exec(rawCmd, { cwd, env: customEnv, maxBuffer: 10 * 1024 * 1024, timeout: 60000 }, (error, stdout, stderr) => {
           res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
           res.end(JSON.stringify({
             stdout: stdout || '',
@@ -522,7 +536,7 @@ const server = http.createServer((req, res) => {
     .tab-content { display: none; }
     .tab-content.active { display: block; }
 
-    /* Terminal Console */
+    /* Terminal Console Precision Grid Layout */
     .terminal-window {
       background: #0d1117;
       border: 1px solid #30363d;
@@ -541,14 +555,15 @@ const server = http.createServer((req, res) => {
     }
     .terminal-output {
       padding: 16px;
-      min-height: 250px;
-      max-height: 420px;
+      min-height: 260px;
+      max-height: 440px;
+      overflow-x: auto;
       overflow-y: auto;
-      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, 'Courier New', monospace;
       font-size: 13px;
-      line-height: 1.5;
+      line-height: 1.4;
       color: #c9d1d9;
-      white-space: pre-wrap;
+      white-space: pre;
     }
     .terminal-input-bar {
       display: flex;
@@ -867,13 +882,15 @@ const server = http.createServer((req, res) => {
           <div class="terminal-output" id="termOutput">Linux VPS Shell Connected. You have full root privileges across all directories (/root, /etc, /var, /tmp, /usr, etc.)...\n</div>
           <div class="terminal-input-bar">
             <span class="prompt-label" id="termPrompt">root@${hostname}:/#</span>
-            <input type="text" class="term-input" id="termInput" placeholder="Ketik perintah (contoh: cd /root, ls -la, pwd, apt update)..." onkeydown="if(event.key==='Enter') runCmd()">
+            <input type="text" class="term-input" id="termInput" placeholder="Ketik perintah (contoh: ls, cd /root, pwd, apt update)..." onkeydown="if(event.key==='Enter') runCmd()">
             <button class="btn-exec" onclick="runCmd()">Eksekusi</button>
           </div>
         </div>
         <div class="quick-cmds">
-          <button class="btn-chip" onclick="quickCmd('cd /root && ls -la')">cd /root</button>
-          <button class="btn-chip" onclick="quickCmd('cd / && ls -la')">cd / (System Root)</button>
+          <button class="btn-chip" onclick="quickCmd('ls')">ls (Grid)</button>
+          <button class="btn-chip" onclick="quickCmd('ls -la')">ls -la (List)</button>
+          <button class="btn-chip" onclick="quickCmd('cd /root && ls')">cd /root</button>
+          <button class="btn-chip" onclick="quickCmd('cd / && ls')">cd / (Root)</button>
           <button class="btn-chip" onclick="quickCmd('pwd')">pwd</button>
           <button class="btn-chip" onclick="quickCmd('free -m')">free -m (RAM)</button>
           <button class="btn-chip" onclick="quickCmd('df -h')">df -h (Disk)</button>
